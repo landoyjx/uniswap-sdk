@@ -28,4 +28,5 @@ yarn install
 yarn build
 
 rm old ~/your-uniswap-interface/node-modules/@uniswap/sdk/sdk/dist
+
 cp -R build to ~/your-uniswap-interface/node-modules/@uniswap/sdk/

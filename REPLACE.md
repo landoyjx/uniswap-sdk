@@ -30,3 +30,6 @@ yarn build
 rm old ~/your-uniswap-interface/node-modules/@uniswap/sdk/sdk/dist
 
 cp -R build to ~/your-uniswap-interface/node-modules/@uniswap/sdk/
+
+
+replace UNI-V2 and Uniswap V2 to your liquidity token name in src/entities/pair.

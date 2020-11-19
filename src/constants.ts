@@ -22,8 +22,9 @@ export enum Rounding {
   ROUND_UP
 }
 
+// TOREPLACE with your factory address
 export const FACTORY_ADDRESS = '0xbA283609B43046f4844E5364E0FAd622678af44C'
-
+// TOREPLACE with your pair token contract bytecode keccak256
 export const INIT_CODE_HASH = '0xa1900462e5312ab2fee9934dc9cb002f7f422b14939fd79178045c5c08d4df5f'
 
 export const MINIMUM_LIQUIDITY = JSBI.BigInt(1000)

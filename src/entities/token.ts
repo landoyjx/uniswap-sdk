@@ -56,6 +56,7 @@ export function currencyEquals(currencyA: Currency, currencyB: Currency): boolea
   }
 }
 
+// TOREPLACE with you env weth contract address
 export const WETH = {
   [ChainId.MAINNET]: new Token(
     ChainId.MAINNET,

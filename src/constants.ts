@@ -36,16 +36,25 @@ export const TWO = JSBI.BigInt(2)
 export const THREE = JSBI.BigInt(3)
 export const FIVE = JSBI.BigInt(5)
 export const TEN = JSBI.BigInt(10)
+export const _98 = JSBI.BigInt(98)
 export const _100 = JSBI.BigInt(100)
 export const _997 = JSBI.BigInt(997)
 export const _1000 = JSBI.BigInt(1000)
+export const _32767 = JSBI.BigInt(32767)
+export const _65535 = JSBI.BigInt(65535)
+export const _2Q112 = JSBI.BigInt(2**112)
+
 
 export enum SolidityType {
   uint8 = 'uint8',
+  uint16 = 'uint16',
+  uint112 = 'uint112',
   uint256 = 'uint256'
 }
 
 export const SOLIDITY_TYPE_MAXIMA = {
   [SolidityType.uint8]: JSBI.BigInt('0xff'),
+  [SolidityType.uint16]: JSBI.BigInt('0xffff'),
+  [SolidityType.uint112]: JSBI.BigInt('0xffffffffffffffffffffffffffff'),
   [SolidityType.uint256]: JSBI.BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')
 }

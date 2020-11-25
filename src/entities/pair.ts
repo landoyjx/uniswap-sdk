@@ -12,10 +12,13 @@ import {
   MINIMUM_LIQUIDITY,
   ZERO,
   ONE,
+  TWO,
   FIVE,
+  _98,
+  _100,
   _997,
   _1000,
-  ChainId
+  ChainId, _2Q112, _65535, _32767
 } from '../constants'
 import { sqrt, parseBigintIsh } from '../utils'
 import { InsufficientReservesError, InsufficientInputAmountError } from '../errors'
@@ -26,6 +29,10 @@ let PAIR_ADDRESS_CACHE: { [token0Address: string]: { [token1Address: string]: st
 export class Pair {
   public readonly liquidityToken: Token
   private readonly tokenAmounts: [TokenAmount, TokenAmount]
+  private readonly buyVirtualBalances: [TokenAmount, TokenAmount]
+  private readonly sellVirtualBalances: [TokenAmount, TokenAmount]
+  private readonly basePrices: [TokenAmount, TokenAmount]
+  private readonly R: JSBI
 
   public static getAddress(tokenA: Token, tokenB: Token): string {
     const tokens = tokenA.sortsBefore(tokenB) ? [tokenA, tokenB] : [tokenB, tokenA] // does safety checks
@@ -47,19 +54,48 @@ export class Pair {
     return PAIR_ADDRESS_CACHE[tokens[0].address][tokens[1].address]
   }
 
-  public constructor(tokenAmountA: TokenAmount, tokenAmountB: TokenAmount) {
-    const tokenAmounts = tokenAmountA.token.sortsBefore(tokenAmountB.token) // does safety checks
+  public constructor(tokenAmountA: TokenAmount,
+                     tokenAmountB: TokenAmount,
+                     buyBVirtualBalances: [TokenAmount, TokenAmount] = [tokenAmountA, tokenAmountB],
+                     sellBVirtualBalances: [TokenAmount, TokenAmount] = [tokenAmountA, tokenAmountB],
+                     basePrices: [TokenAmount, TokenAmount] = [tokenAmountA, tokenAmountB],
+                     R: JSBI = ZERO
+                     ) {
+    invariant(tokenAmountA.token === buyBVirtualBalances[0].token
+        && tokenAmountA.token === sellBVirtualBalances[0].token
+        && tokenAmountA.token === basePrices[0].token, 'PAIR: TOKEN_A'
+    )
+    invariant(tokenAmountB.token === buyBVirtualBalances[1].token
+        && tokenAmountB.token === sellBVirtualBalances[1].token
+        && tokenAmountB.token === basePrices[1].token, 'PAIR: TOKEN_B'
+    )
+
+    const _tokenAmounts = tokenAmountA.token.sortsBefore(tokenAmountB.token) // does safety checks
       ? [tokenAmountA, tokenAmountB]
       : [tokenAmountB, tokenAmountA]
     // TOREPLACE with your liquidity token name
     this.liquidityToken = new Token(
-      tokenAmounts[0].token.chainId,
-      Pair.getAddress(tokenAmounts[0].token, tokenAmounts[1].token),
+      _tokenAmounts[0].token.chainId,
+      Pair.getAddress(_tokenAmounts[0].token, _tokenAmounts[1].token),
       18,
-      'UNI-V2',
-      'Uniswap V2'
+      'POW',
+      'Powerswap'
     )
-    this.tokenAmounts = tokenAmounts as [TokenAmount, TokenAmount]
+    this.tokenAmounts = _tokenAmounts as [TokenAmount, TokenAmount]
+
+    const _basePrices = tokenAmountA.token.sortsBefore(tokenAmountB.token)
+        ? basePrices
+        : [basePrices[1], basePrices[0]]
+    this.basePrices = _basePrices as [TokenAmount, TokenAmount]
+
+    const _buyVirtualBalances = tokenAmountA.token.sortsBefore(tokenAmountB.token)
+        ? buyBVirtualBalances : [sellBVirtualBalances[1], sellBVirtualBalances[0]]
+    const _sellVirtualBalances = tokenAmountA.token.sortsBefore(tokenAmountB.token)
+        ? sellBVirtualBalances : [buyBVirtualBalances[1], buyBVirtualBalances[0]]
+    this.buyVirtualBalances = _buyVirtualBalances as [TokenAmount, TokenAmount]
+    this.sellVirtualBalances = _sellVirtualBalances as [TokenAmount, TokenAmount]
+
+    this.R = R
   }
 
   /**
@@ -72,16 +108,26 @@ export class Pair {
 
   /**
    * Returns the current mid price of the pair in terms of token0, i.e. the ratio of reserve1 to reserve0
+   * buy Y; token0Price = dy/dx
    */
   public get token0Price(): Price {
-    return new Price(this.token0, this.token1, this.tokenAmounts[0].raw, this.tokenAmounts[1].raw)
+    const _numerator = JSBI.multiply(this.buyVirtualBalances[1].raw, JSBI.multiply(_2Q112, _65535))
+    const _denominator = JSBI.add(JSBI.multiply(this.basePrices[0].raw, JSBI.multiply(this.buyVirtualBalances[1].raw, this.R)),
+        JSBI.multiply(this.buyVirtualBalances[0].raw, JSBI.multiply(_2Q112, JSBI.subtract(_65535, this.R)))
+    )
+    return new Price(this.token0, this.token1, _denominator, _numerator)
   }
 
   /**
    * Returns the current mid price of the pair in terms of token1, i.e. the ratio of reserve0 to reserve1
+   * sell Y; token1Price = dx/dy
    */
   public get token1Price(): Price {
-    return new Price(this.token1, this.token0, this.tokenAmounts[1].raw, this.tokenAmounts[0].raw)
+    const _numerator = JSBI.multiply(this.sellVirtualBalances[0].raw, JSBI.multiply(_2Q112, _65535))
+    const _denominator = JSBI.add(JSBI.multiply(this.basePrices[1].raw, JSBI.multiply(this.sellVirtualBalances[0].raw, this.R)),
+        JSBI.multiply(this.sellVirtualBalances[1].raw, JSBI.multiply(_2Q112, JSBI.subtract(_65535, this.R)))
+    )
+    return new Price(this.token1, this.token0, _denominator, _numerator)
   }
 
   /**
@@ -121,24 +167,91 @@ export class Pair {
     return token.equals(this.token0) ? this.reserve0 : this.reserve1
   }
 
-  public getOutputAmount(inputAmount: TokenAmount): [TokenAmount, Pair] {
-    invariant(this.involvesToken(inputAmount.token), 'TOKEN')
-    if (JSBI.equal(this.reserve0.raw, ZERO) || JSBI.equal(this.reserve1.raw, ZERO)) {
-      throw new InsufficientReservesError()
-    }
-    const inputReserve = this.reserveOf(inputAmount.token)
-    const outputReserve = this.reserveOf(inputAmount.token.equals(this.token0) ? this.token1 : this.token0)
-    const inputAmountWithFee = JSBI.multiply(inputAmount.raw, _997)
-    const numerator = JSBI.multiply(inputAmountWithFee, outputReserve.raw)
-    const denominator = JSBI.add(JSBI.multiply(inputReserve.raw, _1000), inputAmountWithFee)
-    const outputAmount = new TokenAmount(
-      inputAmount.token.equals(this.token0) ? this.token1 : this.token0,
-      JSBI.divide(numerator, denominator)
-    )
-    if (JSBI.equal(outputAmount.raw, ZERO)) {
+  public get buyBVirtualBalances(): [TokenAmount, TokenAmount]{
+    return this.buyVirtualBalances as [TokenAmount, TokenAmount]
+  }
+
+  public get sellBVirtualBalances(): [TokenAmount, TokenAmount]{
+    return this.sellVirtualBalances as [TokenAmount, TokenAmount]
+  }
+
+  private _getOutputAmount(amountIn: JSBI, reserveIn: JSBI, reserveOut: JSBI, price: JSBI, R: JSBI): JSBI{
+    invariant(!JSBI.lessThanOrEqual(amountIn, ZERO), 'PAIR: INSUFFICIENT_INPUT_AMOUNT')
+    const amountInWithFee = JSBI.divide(JSBI.multiply(amountIn, _997), _1000)
+    const amountTemp = JSBI.divide(JSBI.multiply(amountInWithFee, JSBI.multiply(reserveIn, _65535)),
+        JSBI.add(JSBI.multiply(amountInWithFee,JSBI.subtract(_65535, R)), JSBI.multiply(reserveIn, _65535)))
+    const _numerator = JSBI.multiply(amountTemp, JSBI.multiply(reserveOut, _65535))
+    const _denominator = JSBI.add(JSBI.multiply(reserveIn, JSBI.subtract(_65535, R)),
+        JSBI.divide(JSBI.multiply(reserveOut, JSBI.multiply(price, R)), _2Q112)
+        )
+    const amountOut = JSBI.divide(_numerator, _denominator)
+
+    if (JSBI.equal(amountOut, ZERO)) {
       throw new InsufficientInputAmountError()
     }
-    return [outputAmount, new Pair(inputReserve.add(inputAmount), outputReserve.subtract(outputAmount))]
+
+    return amountOut
+  }
+
+  public getOutputAmount(inputAmount: TokenAmount): [TokenAmount, Pair] {
+    invariant(this.involvesToken(inputAmount.token), 'TOKEN')
+    if (JSBI.equal(this.reserve0.raw, ZERO) || JSBI.equal(this.reserve1.raw, ZERO) ||
+        JSBI.equal(this.buyVirtualBalances[0].raw, ZERO) || JSBI.equal(this.buyVirtualBalances[1].raw, ZERO) ||
+        JSBI.equal(this.sellVirtualBalances[0].raw, ZERO) || JSBI.equal(this.sellVirtualBalances[1].raw, ZERO)
+    ) {
+      throw new InsufficientReservesError()
+    }
+    const _R = this.R
+    const amountIn = inputAmount.raw
+    if (inputAmount.token == this.token0){
+      const reserveIn = this.buyVirtualBalances[0].raw
+      const reserveOut = this.buyVirtualBalances[1].raw
+      const price = this.basePrices[0].raw
+      const amountOut = this._getOutputAmount(amountIn, reserveIn, reserveOut, price, _R)
+      const outputAmount = new TokenAmount(this.token1, amountOut)
+
+      return [outputAmount, new Pair(this.tokenAmounts[0].add(inputAmount),
+          this.tokenAmounts[1].subtract(outputAmount),
+          [this.buyVirtualBalances[0].add(inputAmount), this.buyVirtualBalances[1].subtract(outputAmount)],
+          this.sellVirtualBalances,
+          this.basePrices,
+          _R
+          )]
+    }else {
+      invariant(inputAmount.token.equals(this.token1), 'PAIR: TOKEN')
+      const reserveIn  = this.sellVirtualBalances[1].raw
+      const reserveOut = this.sellVirtualBalances[0].raw
+      const price = this.basePrices[1].raw
+      const amountOut = this._getOutputAmount(amountIn, reserveIn, reserveOut, price, _R)
+      const outputAmount = new TokenAmount(this.token0, amountOut)
+
+      return [outputAmount, new Pair(this.tokenAmounts[0].subtract(outputAmount),
+          this.tokenAmounts[1].add(inputAmount),
+          this.buyVirtualBalances,
+          [this.sellVirtualBalances[0].subtract(outputAmount), this.sellVirtualBalances[1].add(inputAmount)],
+          this.basePrices,
+          this.R
+      )]
+    }
+  }
+
+  private _getInputAmount(amountOut:JSBI, reserveIn: JSBI, reserveOut: JSBI, price: JSBI, R: JSBI): JSBI{
+    invariant(!JSBI.lessThanOrEqual(amountOut, ZERO),'PAIR: INSUFFICIENT_OUTPUT_AMOUNT')
+
+    const _numeratorTemp = JSBI.multiply(amountOut,
+        JSBI.add(
+            JSBI.multiply(reserveIn, JSBI.subtract(_65535, R)),
+          JSBI.divide(JSBI.multiply(reserveOut,JSBI.multiply(price, R)), _2Q112)
+        )
+    )
+    const _denominatorTemp = JSBI.multiply(reserveOut, _65535)
+    const _amountTemp = JSBI.add(JSBI.divide(_numeratorTemp, _denominatorTemp), ONE)
+    const _numerator = JSBI.multiply(reserveIn, JSBI.multiply(_amountTemp, JSBI.multiply(_65535, _1000)))
+    const _denominator = JSBI.multiply(JSBI.subtract(JSBI.multiply(reserveIn, _65535),
+                                                     JSBI.multiply(_amountTemp, JSBI.subtract(_65535, R))), _997)
+    const amountIn = JSBI.add(JSBI.divide(_numerator, _denominator), ONE)
+
+    return amountIn
   }
 
   public getInputAmount(outputAmount: TokenAmount): [TokenAmount, Pair] {
@@ -151,15 +264,34 @@ export class Pair {
       throw new InsufficientReservesError()
     }
 
-    const outputReserve = this.reserveOf(outputAmount.token)
-    const inputReserve = this.reserveOf(outputAmount.token.equals(this.token0) ? this.token1 : this.token0)
-    const numerator = JSBI.multiply(JSBI.multiply(inputReserve.raw, outputAmount.raw), _1000)
-    const denominator = JSBI.multiply(JSBI.subtract(outputReserve.raw, outputAmount.raw), _997)
-    const inputAmount = new TokenAmount(
-      outputAmount.token.equals(this.token0) ? this.token1 : this.token0,
-      JSBI.add(JSBI.divide(numerator, denominator), ONE)
-    )
-    return [inputAmount, new Pair(inputReserve.add(inputAmount), outputReserve.subtract(outputAmount))]
+    const _R = this.R
+    const amountOut = outputAmount.raw
+    if (outputAmount.token.equals(this.token0)){
+      const reserveIn = this.sellVirtualBalances[1].raw
+      const reserveOut = this.sellVirtualBalances[0].raw
+      const price = this.basePrices[1].raw
+      const amountIn = this._getInputAmount(amountOut, reserveIn, reserveOut, price, _R)
+      const inputAmount = new TokenAmount(this.token1, amountIn)
+
+      return [inputAmount, new Pair(this.tokenAmounts[0].subtract(outputAmount), this.tokenAmounts[1].add(inputAmount),
+        this.buyVirtualBalances,
+          [this.sellVirtualBalances[0].subtract(outputAmount), this.sellVirtualBalances[1].add(inputAmount)],
+      this.basePrices,
+          _R)]
+    }else {
+      invariant(outputAmount.token.equals(this.token1), 'PAIR: TOKEN')
+      const reserveIn = this.buyVirtualBalances[0].raw
+      const reserveOut = this.buyVirtualBalances[1].raw
+      const price = this.basePrices[0].raw
+      const amountIn = this._getInputAmount(amountOut, reserveIn, reserveOut, price, _R)
+      const inputAmount = new TokenAmount(this.token0, amountIn)
+
+      return [inputAmount, new Pair(this.tokenAmounts[0].add(inputAmount), this.tokenAmounts[1].subtract(outputAmount),
+          [this.buyVirtualBalances[0].add(inputAmount), this.buyVirtualBalances[1].subtract(outputAmount)],
+          this.sellVirtualBalances,
+          this.basePrices,
+          _R)]
+    }
   }
 
   public getLiquidityMinted(
@@ -177,8 +309,10 @@ export class Pair {
     if (JSBI.equal(totalSupply.raw, ZERO)) {
       liquidity = JSBI.subtract(sqrt(JSBI.multiply(tokenAmounts[0].raw, tokenAmounts[1].raw)), MINIMUM_LIQUIDITY)
     } else {
-      const amount0 = JSBI.divide(JSBI.multiply(tokenAmounts[0].raw, totalSupply.raw), this.reserve0.raw)
-      const amount1 = JSBI.divide(JSBI.multiply(tokenAmounts[1].raw, totalSupply.raw), this.reserve1.raw)
+      const amount0 = JSBI.divide(JSBI.multiply(tokenAmounts[0].raw, JSBI.multiply(totalSupply.raw, _98)),
+          JSBI.add(JSBI.multiply(this.reserve0.raw, _100), JSBI.multiply(tokenAmounts[0].raw, TWO)))
+      const amount1 = JSBI.divide(JSBI.multiply(tokenAmounts[1].raw, JSBI.multiply(totalSupply.raw, _98)),
+          JSBI.add(JSBI.multiply(this.reserve1.raw, _100), JSBI.multiply(tokenAmounts[1].raw, TWO)))
       liquidity = JSBI.lessThanOrEqual(amount0, amount1) ? amount0 : amount1
     }
     if (!JSBI.greaterThan(liquidity, ZERO)) {
@@ -221,9 +355,13 @@ export class Pair {
       }
     }
 
+    const _numerator = JSBI.subtract(JSBI.multiply(totalSupplyAdjusted.raw, _100), JSBI.multiply(liquidity.raw, TWO))
+    const _denominator = JSBI.add(JSBI.divide(JSBI.multiply(totalSupplyAdjusted.raw, JSBI.multiply(totalSupplyAdjusted.raw, _98)),
+        liquidity.raw), ONE)
+
     return new TokenAmount(
       token,
-      JSBI.divide(JSBI.multiply(liquidity.raw, this.reserveOf(token).raw), totalSupplyAdjusted.raw)
+      JSBI.divide(JSBI.multiply(_numerator, this.reserveOf(token).raw), _denominator)
     )
   }
 }

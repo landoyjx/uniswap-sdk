@@ -274,7 +274,9 @@ export class Trade {
       const pair = pairs[i]
       // pair irrelevant
       if (!pair.token0.equals(amountIn.token) && !pair.token1.equals(amountIn.token)) continue
-      if (pair.reserve0.equalTo(ZERO) || pair.reserve1.equalTo(ZERO)) continue
+      if (pair.reserve0.equalTo(ZERO) || pair.reserve1.equalTo(ZERO) ||
+      pair.buyBVirtualBalances[0].equalTo(ZERO) || pair.buyBVirtualBalances[1].equalTo(ZERO) ||
+          pair.sellBVirtualBalances[0].equalTo(ZERO) || pair.sellBVirtualBalances[1].equalTo(ZERO)) continue
 
       let amountOut: TokenAmount
       try {
@@ -362,7 +364,9 @@ export class Trade {
       const pair = pairs[i]
       // pair irrelevant
       if (!pair.token0.equals(amountOut.token) && !pair.token1.equals(amountOut.token)) continue
-      if (pair.reserve0.equalTo(ZERO) || pair.reserve1.equalTo(ZERO)) continue
+      if (pair.reserve0.equalTo(ZERO) || pair.reserve1.equalTo(ZERO) ||
+          pair.buyBVirtualBalances[0].equalTo(ZERO) || pair.buyBVirtualBalances[1].equalTo(ZERO) ||
+          pair.sellBVirtualBalances[0].equalTo(ZERO) || pair.sellBVirtualBalances[1].equalTo(ZERO)) continue
 
       let amountIn: TokenAmount
       try {

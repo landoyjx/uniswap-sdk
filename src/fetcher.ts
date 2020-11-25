@@ -3,16 +3,19 @@ import { getNetwork } from '@ethersproject/networks'
 import { getDefaultProvider } from '@ethersproject/providers'
 import { TokenAmount } from './entities/fractions/tokenAmount'
 import { Pair } from './entities/pair'
-import IUniswapV2Pair from '@uniswap/v2-core/build/IUniswapV2Pair.json'
+//import IUniswapV2Pair from '@uniswap/v2-core/build/IUniswapV2Pair.json'
+import PowerswapPair from './abis/PowerswapPair.json' // copied from powerswap-core/contracts/artifacts
 import invariant from 'tiny-invariant'
 import ERC20 from './abis/ERC20.json'
-import { ChainId } from './constants'
+import {ChainId} from './constants'
 import { Token } from './entities/token'
+import JSBI from "jsbi";
+
 
 let TOKEN_DECIMALS_CACHE: { [chainId: number]: { [address: string]: number } } = {
   [ChainId.MAINNET]: {
     '0xE0B7927c4aF23765Cb51314A0E0521A9645F0E2A': 9 // DGD
-  }
+  } //
 }
 
 /**
@@ -68,8 +71,25 @@ export abstract class Fetcher {
   ): Promise<Pair> {
     invariant(tokenA.chainId === tokenB.chainId, 'CHAIN_ID')
     const address = Pair.getAddress(tokenA, tokenB)
-    const [reserves0, reserves1] = await new Contract(address, IUniswapV2Pair.abi, provider).getReserves()
+    const [reserves0, reserves1] = await new Contract(address, PowerswapPair.abi, provider).getReserves()
+    const [balanceBuy0, balanceBuy1, balanceSell0, balanceSell1] = await new Contract(address, PowerswapPair.abi, provider).getBalances()
+    const [buyPrice, sellPrice] = await new Contract(address, PowerswapPair.abi, provider).getPrices()
+    const R = await new Contract(address, PowerswapPair.abi, provider).getR()
+
     const balances = tokenA.sortsBefore(tokenB) ? [reserves0, reserves1] : [reserves1, reserves0]
-    return new Pair(new TokenAmount(tokenA, balances[0]), new TokenAmount(tokenB, balances[1]))
+    const [balanceBuyA, balanceBuyB, balanceSellA, balanceSellB] = tokenA.sortsBefore(tokenB)
+        ? [balanceBuy0, balanceBuy1, balanceSell0, balanceSell1]
+        : [balanceSell1, balanceSell0, balanceBuy1, balanceBuy0]
+    const [buyBPrice, sellBPrice] = tokenA.sortsBefore(tokenB) ? [buyPrice, sellPrice] : [sellPrice, buyPrice]
+
+
+    return new Pair(
+        new TokenAmount(tokenA, balances[0]),
+        new TokenAmount(tokenB, balances[1]),
+        [new TokenAmount(tokenA, balanceBuyA), new TokenAmount(tokenB, balanceBuyB)],
+        [new TokenAmount(tokenA, balanceSellA), new TokenAmount(tokenB, balanceSellB)],
+        [new TokenAmount(tokenA, buyBPrice), new TokenAmount(tokenB, sellBPrice)],
+        JSBI.BigInt(R)
+    )
   }
 }

@@ -355,6 +355,13 @@ export class Pair {
       }
     }
 
+    if (liquidity.equalTo(ZERO)){
+      return new TokenAmount(
+          token,
+          ZERO
+      )
+    }else {
+      invariant(JSBI.greaterThan(liquidity.raw, ZERO), 'LIQUIDITY')
     const _numerator = JSBI.subtract(JSBI.multiply(totalSupplyAdjusted.raw, _100), JSBI.multiply(liquidity.raw, TWO))
     const _denominator = JSBI.add(JSBI.divide(JSBI.multiply(totalSupplyAdjusted.raw, JSBI.multiply(totalSupplyAdjusted.raw, _98)),
         liquidity.raw), ONE)
@@ -363,5 +370,6 @@ export class Pair {
       token,
       JSBI.divide(JSBI.multiply(_numerator, this.reserveOf(token).raw), _denominator)
     )
+  }
   }
 }
